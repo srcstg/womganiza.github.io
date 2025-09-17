@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Womganiza v.1.5.8</title>
+  <style>
+    html, body { height: 100%; margin: 0; background:#0e0f13; color:#fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif; }
+    #wrap { position: fixed; inset: 0; display: grid; place-items: center; }
+    canvas { width: 100vw; height: 100vh; touch-action: none; display:block; image-rendering: pixelated; }
+
+    .controls {
+      position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
+      display: flex; gap: 1.5rem; justify-content: center; pointer-events: none; width: auto;
+    }
+    .btn {
+      pointer-events: auto;
+      border: 1px solid rgba(255,255,255,.15);
+      padding: 1.4rem 1.8rem;
+      font-size: 1.25rem;
+      border-radius: 14px;
+      -webkit-tap-highlight-color: transparent;
+      /* bloqueo de selección/callout en móviles */
+      user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+      -webkit-touch-callout: none;
+      font-weight: 800;
+      cursor: pointer;
+      transition: transform .08s ease, box-shadow .2s ease, filter .2s ease;
+      /* contorno para texto HTML (aplica a "Jugar") */
+      -webkit-text-stroke: 2px #000; text-stroke: 2px #000; paint-order: stroke fill;
+      text-shadow:
+        2px 0 #000, -2px 0 #000, 0 2px #000, 0 -2px #000,
+        2px 2px #000, -2px 2px #000, 2px -2px #000, -2px -2px #000;
+    }
+    .btn:active { transform: translateY(1px) scale(.98); }
+
+    /* Izquierda / Derecha: fondo blanco, icono negro (SVG) */
+    #left, #right {
+      background: #fff;
+      color: #111; /* por si hay fallback */
+      border-color: rgba(0,0,0,.12);
+      box-shadow: 0 6px 18px rgba(0,0,0,.18), inset 0 0 0 1px rgba(0,0,0,.04);
+    }
+    #left:hover, #right:hover { filter: brightness(0.98); }
+    /* tamaño de los SVG dentro de los botones */
+    .btn svg { width: 28px; height: 28px; display:block; }
+
+    /* Jugar: verde con “flow” interno */
+    #start {
+      position: relative;
+      color: #fff;
+      border: 0;
+      background: linear-gradient(90deg, #00c853, #00e676, #00c853);
+      background-size: 200% 100%;
+      animation: btnGradient 2.8s ease-in-out infinite;
+      box-shadow: 0 10px 26px rgba(0,200,83,.35);
+      overflow: hidden;
+    }
+    #start::after {
+      content: "";
+      position: absolute; inset: 2px;
+      border-radius: 12px;
+      background:
+        linear-gradient(120deg,
+          rgba(255,255,255,.35) 0%,
+          rgba(255,255,255,0) 25%,
+          rgba(255,255,255,.35) 50%,
+          rgba(255,255,255,0) 75%,
+          rgba(255,255,255,.35) 100%);
+      background-size: 200% 100%;
+      mix-blend-mode: soft-light;
+      animation: btnSweep 1.6s linear infinite;
+      pointer-events: none;
+    }
+    #start:hover { box-shadow: 0 12px 30px rgba(0,200,83,.5); }
+
+    @keyframes btnGradient {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    @keyframes btnSweep {
+      0% { background-position: -100% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    .toast { position: fixed; top: .75rem; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12); padding: .5rem .75rem; border-radius: 10px; font-size: .85rem; opacity: 0; transition: opacity .25s ease; }
+    .toast.show { opacity: 1; }
+
+    /* accesibilidad: texto solo para lectores de pantalla */
+    .sr-only {
+      position:absolute !important; width:1px; height:1px; padding:0; margin:-1px;
+      overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
+    }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+</div>
+<div class="controls" id="controls" aria-hidden="true">
+  <!-- Flecha izquierda como SVG -->
+  <div class="btn" id="left" aria-label="Mover a la izquierda">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M15 6 L9 12 L15 18" fill="none" stroke="#111" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="sr-only">Izquierda</span>
+  </div>
+  <!-- Botón jugar (texto) -->
+  <div class="btn" id="start">Jugar</div>
+  <!-- Flecha derecha como SVG -->
+  <div class="btn" id="right" aria-label="Mover a la derecha">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M9 6 L15 12 L9 18" fill="none" stroke="#111" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="sr-only">Derecha</span>
+  </div>
+</div>
+<div class="toast" id="toast">Consejo: también puedes arrastrar para mover la cesta</div>
+
+<script type="module">
+// ===== Fondo mosaico =====
+let BG_PATTERN = null;
+const CELL = 24;  // tamaño cuadrito
+const GAP  = 2;   // grosor rejilla
+function buildBackgroundPattern(ctx) {
+  const N = 6;
+  const off = document.createElement('canvas');
+  off.width  = CELL * N;
+  off.height = CELL * N;
+  const c = off.getContext('2d');
+  c.imageSmoothingEnabled = false;
+  c.fillStyle = '#000';
+  c.fillRect(0,0,off.width,off.height);
+  const RED='#e8001b', BLUE='#1138b8', WHITE='#fff';
+  for (let j=0;j<N;j++){
+    for (let i=0;i<N;i++){
+      let k=(i-j)%N; if(k<0) k+=N;
+      let col=(k===0||k===1)?RED:(k===2||k===3)?BLUE:WHITE;
+      c.fillStyle=col;
+      const x=i*CELL + GAP*0.5, y=j*CELL + GAP*0.5;
+      c.fillRect(x,y,CELL-GAP,CELL-GAP);
+    }
+  }
+  BG_PATTERN = ctx.createPattern(off,'repeat');
+}
+
+// --- Configuración básica ---
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+// --- Sprites PNG ---
+const IMAGES = { player: new Image(), drop: new Image(), logo: new Image() };
+IMAGES.player.src = './img/otakin_animate.png';
+IMAGES.drop.src   = './img/choripan_8bit.png';
+IMAGES.logo.src   = './img/womganiza.png';
+
+const controls = {
+  left: document.getElementById('left'),
+  right: document.getElementById('right'),
+  start: document.getElementById('start'),
+};
+const toast = document.getElementById('toast');
+
+function updateStartButtonLabel() {
+  if (GAME.state === 'menu' || GAME.state === 'gameover') controls.start.textContent = 'Jugar';
+  else if (GAME.state === 'playing') controls.start.textContent = 'Pausa';
+  else if (GAME.state === 'paused') controls.start.textContent = 'Reanudar';
+}
+
+const GAME = {
+  width: 360,
+  height: 640,
+  state: 'menu',
+  time: 30,
+  score: 0,
+  lastTime: 0,
+  spawnEvery: 500,
+  lastSpawn: 0,
+};
+
+// Entidades
+const player = {
+  w: 85, h: 98, displayW: 85, displayH: 98,
+  x: 180 - 48, y: 640 - 220,
+  speed: 520, vx: 0,
+  animFrame: 0, eatingTimer: 0, frameTimer: 0,
+};
+const drops = []; // {x, y, r, vy}
+
+// --- Util: texto con contorno negro (canvas) ---
+function drawTextOutlined(text, x, y, {
+  font, color='#fff', align='center', baseline='alphabetic',
+  outlineColor='#000', weight=0.28
+} = {}) {
+  ctx.save();
+  if (font) ctx.font = font;
+  ctx.textAlign = align;
+  ctx.textBaseline = baseline;
+  const m = ctx.font.match(/(\d+(?:\.\d+)?)px/);
+  const size = m ? parseFloat(m[1]) : 16;
+  const lw = Math.max(2, size * weight);
+  ctx.lineWidth = lw;
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
+  ctx.strokeStyle = outlineColor;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// --- Redimensionamiento responsivo + DPR ---
+function resize() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  canvas.style.width = vw + 'px';
+  canvas.style.height = vh + 'px';
+  canvas.width = Math.floor(vw * DPR);
+  canvas.height = Math.floor(vh * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  GAME.width = vw;
+  GAME.height = vh;
+  player.y = GAME.height - 220;
+  player.x = clamp(player.x, 0, GAME.width - player.displayW);
+  if (!BG_PATTERN) buildBackgroundPattern(ctx);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Utilidades ---
+function rnd(min, max) { return Math.random() * (max - min) + min; }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function aabb(rect, circle) {
+  const nearestX = clamp(circle.x, rect.x, rect.x + rect.w);
+  const nearestY = clamp(circle.y, rect.y, rect.y + rect.h);
+  const dx = circle.x - nearestX;
+  const dy = circle.y - nearestY;
+  return (dx * dx + dy * dy) <= (circle.r * circle.r);
+}
+
+// --- Entrada táctil / arrastre ---
+let dragging = false; let dragOffsetX = 0;
+canvas.addEventListener('pointerdown', (e) => {
+  dragging = true; canvas.setPointerCapture(e.pointerId);
+  const x = e.clientX; dragOffsetX = x - player.x - player.displayW / 2;
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const x = e.clientX - dragOffsetX;
+  player.x = clamp(x - player.displayW / 2, 0, GAME.width - player.displayW);
+});
+canvas.addEventListener('pointerup', () => { dragging = false; });
+canvas.addEventListener('pointercancel', () => dragging = false);
+
+// Botones izquierda / derecha (presión continua)
+let leftHeld = false, rightHeld = false;
+controls.left.addEventListener('pointerdown', () => leftHeld = true);
+controls.left.addEventListener('pointerup', () => leftHeld = false);
+controls.left.addEventListener('pointerleave', () => leftHeld = false);
+controls.right.addEventListener('pointerdown', () => rightHeld = true);
+controls.right.addEventListener('pointerup', () => rightHeld = false);
+controls.right.addEventListener('pointerleave', () => rightHeld = false);
+
+// Botón Jugar
+controls.start.addEventListener('click', () => {
+  if (GAME.state === 'menu' || GAME.state === 'gameover') {
+    startGame();
+  } else if (GAME.state === 'playing') {
+    pauseGame();
+  } else if (GAME.state === 'paused') {
+    resumeGame();
+  }
+});
+
+// Teclas (debug desktop)
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') leftHeld = true;
+  if (e.key === 'ArrowRight') rightHeld = true;
+  if (e.key.toLowerCase() === ' ') startGame();
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowLeft') leftHeld = false;
+  if (e.key === 'ArrowRight') rightHeld = false;
+});
+
+// Orientación (opcional): inclinar para mover
+window.addEventListener('deviceorientation', (e) => {
+  if (GAME.state !== 'playing') return;
+  const tilt = (e.gamma || 0);
+  player.vx = clamp(tilt * 18, -720, 720);
+});
+
+// --- Lógica del juego (igual que tenías) ---
+function startGame() {
+  GAME.state = 'playing';
+  GAME.score = 0;
+  GAME.time = 30;
+  GAME.lastSpawn = 0;
+  drops.length = 0;
+  showToast('¡Atrapa todos los choripanes!');
+  updateStartButtonLabel();
+}
+function endGame() {
+  GAME.state = 'gameover';
+  showToast(`Fin del juego. Puntos: ${GAME.score}`);
+  updateStartButtonLabel();
+}
+function pauseGame() {
+  GAME.state = 'paused';
+  showToast('Juego en pausa');
+  updateStartButtonLabel();
+}
+function resumeGame() {
+  GAME.state = 'playing';
+  showToast('Juego reanudado');
+  updateStartButtonLabel();
+}
+function spawnDrop() {
+  const r = rnd(16, 28);
+  drops.push({ x: rnd(r, GAME.width - r), y: -r - 10, r, vy: rnd(260, 420) });
+}
+function update(dt) {
+  if (player.eatingTimer > 0) {
+    player.eatingTimer -= dt;
+    player.frameTimer  -= dt;
+    if (player.frameTimer <= 0) {
+      player.frameTimer = 0.1;
+      player.animFrame = 1 - player.animFrame;
+    }
+    if (player.eatingTimer <= 0) player.animFrame = 0;
+  }
+  if (GAME.state === 'menu' || GAME.state === 'gameover' || GAME.state === 'paused') return;
+
+  let vx = 0;
+  if (leftHeld) vx -= player.speed;
+  if (rightHeld) vx += player.speed;
+  vx = vx || player.vx || 0;
+  player.x = clamp(player.x + vx * dt, 0, GAME.width - player.displayW);
+
+  GAME.lastSpawn += dt * 1000;
+  const dynamicSpawnMs = Math.max(260, GAME.spawnEvery - GAME.score * 8);
+  if (GAME.lastSpawn >= dynamicSpawnMs) { spawnDrop(); GAME.lastSpawn = 0; }
+
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const d = drops[i];
+    d.y += d.vy * dt;
+    const playerHitbox = { x: player.x, y: player.y, w: player.displayW, h: player.displayH };
+    if (aabb(playerHitbox, d)) {
+      drops.splice(i, 1);
+      GAME.score += 1;
+      player.eatingTimer = 0.5;
+      continue;
+    }
+    if (d.y - d.r > GAME.height + 40) drops.splice(i, 1);
+  }
+
+  GAME.time -= dt;
+  if (GAME.time <= 0) { GAME.time = 0; endGame(); }
+}
+
+// --- Dibujo ---
+function draw() {
+  if (!BG_PATTERN) buildBackgroundPattern(ctx);
+  ctx.fillStyle = BG_PATTERN;
+  ctx.fillRect(0, 0, GAME.width, GAME.height);
+
+  if (GAME.state === 'menu') { drawTitle(); return; }
+
+  drawPlayer();
+
+  for (const d of drops) {
+    if (IMAGES.drop.complete && IMAGES.drop.naturalWidth > 0) {
+      const size = d.r * 2;
+      ctx.drawImage(IMAGES.drop, d.x - d.r, d.y - d.r, size, size);
+    } else {
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.fillStyle = '#45caff';
+      ctx.fill();
+    }
+  }
+
+  drawHUD();
+
+  if (GAME.state === 'gameover') drawGameOver();
+  if (GAME.state === 'paused') drawPause();
+}
+
+function drawTitle() {
+  ctx.save();
+  ctx.textAlign = 'center';
+  if (IMAGES.logo.complete && IMAGES.logo.naturalWidth > 0) {
+    const logoWidth = 240;
+    const scale = logoWidth / IMAGES.logo.naturalWidth;
+    const logoHeight = IMAGES.logo.naturalHeight * scale;
+    const logoX = (GAME.width - logoWidth) / 2;
+    const logoY = GAME.height * 0.20;
+    ctx.drawImage(IMAGES.logo, logoX, logoY, logoWidth, logoHeight);
+  }
+  drawTextOutlined('Atrapa Choripanes', GAME.width/2, GAME.height * 0.45, {
+    font: '900 28px Inter, system-ui, sans-serif', color: '#ffd54f'
+  });
+  drawTextOutlined('Mueve a Otakin para atraparlos', GAME.width/2, GAME.height * 0.50, {
+    font: '800 16px Inter, system-ui, sans-serif', color: '#3dd5ff'
+  });
+  drawTextOutlined('Toca Jugar para comenzar (30s)', GAME.width/2, GAME.height * 0.55, {
+    font: '800 16px Inter, system-ui, sans-serif', color: '#ffffff'
+  });
+  ctx.restore();
+}
+
+function drawPlayer() {
+  const sourceX = player.animFrame * player.w;
+  const sourceY = 0;
+  if (IMAGES.player.complete && IMAGES.player.naturalWidth > 0) {
+    ctx.drawImage(
+      IMAGES.player, sourceX, sourceY, player.w, player.h,
+      player.x, player.y, player.displayW, player.displayH
+    );
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.fillRect(player.x, player.y, player.displayW, player.displayH);
+  }
+}
+
+function drawHUD() {
+  drawTextOutlined('Puntos: ' + GAME.score, 16, 30, {
+    font: '900 18px Inter, system-ui, sans-serif', color: '#fff', align: 'left'
+  });
+  drawTextOutlined('Tiempo: ' + Math.ceil(GAME.time), GAME.width - 16, 30, {
+    font: '900 18px Inter, system-ui, sans-serif', color: '#fff', align: 'right'
+  });
+}
+
+function drawGameOver() {
+  drawTextOutlined('¡Tiempo!', GAME.width/2, GAME.height*0.42, {
+    font: '900 28px Inter, system-ui, sans-serif', color: '#fff'
+  });
+  drawTextOutlined(`Puntaje: ${GAME.score}`, GAME.width/2, GAME.height*0.47, {
+    font: '900 18px Inter, system-ui, sans-serif', color: '#fff'
+  });
+  drawTextOutlined('Toca Jugar para intentar de nuevo', GAME.width/2, GAME.height*0.52, {
+    font: '900 16px Inter, system-ui, sans-serif', color: '#fff'
+  });
+}
+
+function drawPause() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(0,0,GAME.width,GAME.height);
+  ctx.restore();
+  drawTextOutlined('Pausa', GAME.width/2, GAME.height*0.42, {
+    font: '900 24px Inter, system-ui, sans-serif', color: '#fff'
+  });
+  drawTextOutlined('Toca Reanudar para continuar', GAME.width/2, GAME.height*0.47, {
+    font: '900 16px Inter, system-ui, sans-serif', color: '#fff'
+  });
+}
+
+function loop(now) {
+  if (!GAME.lastTime) GAME.lastTime = now;
+  const dt = Math.min(0.033, (now - GAME.lastTime) / 1000);
+  GAME.lastTime = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function showToast(msg, ms = 2000) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toast.classList.remove('show'), ms);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && GAME.state === 'playing') {
+    GAME.lastTime = performance.now();
+  }
+});
+
+function updateControlsVisibility() {
+  const visible = true;
+  document.getElementById('controls').style.display = visible ? 'flex' : 'none';
+}
+updateControlsVisibility();
+
+GAME.state = 'menu';
+showToast('Consejo: también puedes inclinar el teléfono');
+updateStartButtonLabel();
+
+let lastTouchEnd = 0;
+document.addEventListener('touchend', function (event) {
+  const now = new Date().getTime();
+  if (now - lastTouchEnd <= 300) {
+    event.preventDefault(); // bloquea el zoom por doble tap
+  }
+  lastTouchEnd = now;
+}, false);
+
+</script>
+</body>
+</html>
