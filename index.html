@@ -133,16 +133,20 @@
 // ===== Fondo único centrado =====
 const BG = {
   img: new Image(),
-  scale: 'none',     // 'none' | 'contain' | 'cover'
-  alignX: 'center',  // 'left' | 'center' | 'right' | número px
-  alignY: 'center'   // 'top'  | 'center' | 'bottom' | número px
+  scale: 'cover',    // ← usar "cover" para que llene el canvas
+  alignX: 'center',
+  alignY: 'center'
 };
 
-BG.img.src = './img/fondo1.png'; // tu 1024x1536 (o el path que uses)
+BG.img.src = './img/fondo1.png';
 
-/** Dibuja el fondo según la escala y centrado */
 function drawBackground() {
-  if (!BG.img.complete || !BG.img.naturalWidth) return;
+  if (!BG.img.complete || !BG.img.naturalWidth) {
+    // fondo sólido mientras carga
+    ctx.fillStyle = '#0e0f13';
+    ctx.fillRect(0, 0, GAME.width, GAME.height);
+    return;
+  }
 
   const canW = GAME.width, canH = GAME.height;
   const imgW = BG.img.naturalWidth, imgH = BG.img.naturalHeight;
@@ -150,26 +154,29 @@ function drawBackground() {
   let s = 1;
   if (BG.scale === 'contain') {
     s = Math.min(canW / imgW, canH / imgH);
-  } else if (BG.scale === 'contain') {
+  } else if (BG.scale === 'cover') {        // ← antes decía 'contain' de nuevo
     s = Math.max(canW / imgW, canH / imgH);
-  } // 'none' => s = 1
+  }
 
   const w = imgW * s;
   const h = imgH * s;
 
-  // Centrado/alineación
+  // alineación
   let x;
   if (typeof BG.alignX === 'number') x = BG.alignX;
   else if (BG.alignX === 'left')     x = 0;
   else if (BG.alignX === 'right')    x = canW - w;
-  else                                x = (canW - w) / 2; // center
+  else                                x = (canW - w) / 2;
 
   let y;
   if (typeof BG.alignY === 'number') y = BG.alignY;
   else if (BG.alignY === 'top')      y = 0;
   else if (BG.alignY === 'bottom')   y = canH - h;
-  else                                y = (canH - h) / 2; // center
+  else                                y = (canH - h) / 2;
 
+  // limpiar y dibujar
+  ctx.fillStyle = '#0e0f13';
+  ctx.fillRect(0, 0, canW, canH);
   ctx.drawImage(BG.img, x, y, w, h);
 }
 
